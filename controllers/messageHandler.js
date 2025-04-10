@@ -1,6 +1,9 @@
 // controllers/messageHandler.js
-const { getToday, initUser, getUser } = require('../utils/dataStore');
+const { getToday, initUser, getUser, logMeal, logWeight } = require('../utils/dataStore');
 const { getMealEstimation, getNutritionInfo } = require('../services/openaiService');
+const { detectIntent } = require('../services/intentService');
+
+const pendingConfirmations = {}; // Stores pending intents waiting for user confirmation
 
 const mainMenu = `🙏 Welcome to your Indian Diet Coach Bot!
 Here’s what I can help you with:
@@ -21,36 +24,32 @@ Just type your meal (e.g., "2 rotis, dal, and chai")
 
 async function handleMessage(req, twiml) {
   const phone = req.body.From;
-  const msg = req.body.Body.trim();
+  const msg = req.body.Body.trim().toLowerCase();
   const today = getToday();
-
-  const user = getUser(phone);
   initUser(phone);
+  const user = getUser(phone);
 
+  // ✅ Handle confirmation replies
+  if (pendingConfirmations[phone]) {
+    const { intent, payload } = pendingConfirmations[phone];
+    if (msg === 'yes' || msg === 'y') {
+      if (intent === 'log_food') {
+        logMeal(phone, payload);
+        twiml.message(`✅ Logged: ${payload.label}\nCalories: ${payload.calories} | Protein: ${payload.protein}g | Carbs: ${payload.carbs}g | Fat: ${payload.fat}g`);
+      } else if (intent === 'log_weight') {
+        logWeight(phone, payload.weight);
+        twiml.message(`✅ Logged weight: ${payload.weight} lbs`);
+      }
+    } else {
+      twiml.message(`❌ Got it — not logging anything.`);
+    }
+    delete pendingConfirmations[phone];
+    return;
+  }
+
+  // Static command routes
   if (msg === '/start' || msg === '/help') {
     twiml.message(mainMenu);
-    return;
-  }
-
-  if (msg.startsWith('/weight')) {
-    const weight = parseFloat(msg.split(' ')[1]);
-    if (!isNaN(weight)) {
-      user.weights[today] = weight;
-      twiml.message(`✅ Logged your weight: ${weight} lbs`);
-    } else {
-      twiml.message(`❌ Please provide a valid number. Example: /weight 172.4`);
-    }
-    return;
-  }
-
-  if (msg.startsWith('/goal')) {
-    const goal = msg.split(' ')[1]?.toLowerCase();
-    if (["cut", "bulk", "maintain"].includes(goal)) {
-      user.goal = goal;
-      twiml.message(`🎯 Goal set to: ${goal}`);
-    } else {
-      twiml.message(`❌ Invalid goal. Use /goal cut | bulk | maintain`);
-    }
     return;
   }
 
@@ -73,6 +72,17 @@ async function handleMessage(req, twiml) {
     return;
   }
 
+  if (msg.startsWith('/goal')) {
+    const goal = msg.split(' ')[1]?.toLowerCase();
+    if (["cut", "bulk", "maintain"].includes(goal)) {
+      user.goal = goal;
+      twiml.message(`🎯 Goal set to: ${goal}`);
+    } else {
+      twiml.message(`❌ Invalid goal. Use /goal cut | bulk | maintain`);
+    }
+    return;
+  }
+
   if (msg.startsWith('/info')) {
     const topic = msg.split(' ').slice(1).join(' ');
     if (!topic) {
@@ -90,14 +100,40 @@ async function handleMessage(req, twiml) {
     return;
   }
 
-  try {
-    const meal = await getMealEstimation(msg);
-    if (!user.meals[today]) user.meals[today] = [];
-    user.meals[today].push(meal);
-    twiml.message(`🍽️ Logged: ${meal.label}\nCalories: ${meal.calories}\nProtein: ${meal.protein}g | Carbs: ${meal.carbs}g | Fat: ${meal.fat}g`);
-  } catch (err) {
-    twiml.message("❌ Sorry, I couldn't understand that meal. Try again with a different description.");
+  // 🔍 Detect intent for freeform message
+  const { intent, payload, confirmationRequired } = await detectIntent(req.body.Body);
+
+  if (intent === 'log_food' && confirmationRequired) {
+    twiml.message(`🍽️ This looks like a food log:
+${payload.label} – ${payload.calories} cal
+Log this? (yes/no)`);
+    pendingConfirmations[phone] = { intent, payload };
+    return;
   }
+
+  if (intent === 'log_weight' && confirmationRequired) {
+    twiml.message(`⚖️ Log your weight as ${payload.weight} lbs? (yes/no)`);
+    pendingConfirmations[phone] = { intent, payload };
+    return;
+  }
+
+  if (intent === 'mealplan') {
+    const info = await getNutritionInfo(`Create a 1-day Indian meal plan for someone with a goal to ${user.goal}. Include estimated calories and macros.`);
+    twiml.message(`📋 ${info}`);
+    return;
+  }
+
+  if (intent === 'info') {
+    const info = await getNutritionInfo(payload.topic);
+    twiml.message(`📚 ${info}`);
+    return;
+  }
+
+  if (intent === 'summary') {
+    return handleMessage({ body: { From: phone, Body: '/summary' } }, twiml);
+  }
+
+  twiml.message("🤖 I'm not sure what you meant — try again or type /help for options.");
 }
 
 module.exports = { handleMessage };
