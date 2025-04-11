@@ -1,7 +1,8 @@
 // controllers/messageHandler.js
-const { getToday, initUser, getUser, logMeal, logWeight } = require('../utils/dataStore');
-const { getMealEstimation, getNutritionInfo } = require('../services/openaiService');
+const { initUser, getUser, logMeal, logWeight } = require('../utils/firebaseDataStore');
+const { getNutritionInfo } = require('../services/openaiService');
 const { detectIntent } = require('../services/intentService');
+const db = require('../utils/firebase');
 
 const pendingConfirmations = {}; // Stores pending intents waiting for user confirmation
 
@@ -22,39 +23,57 @@ Just type your meal (e.g., "2 rotis, dal, and chai")
 
 🛠 Type /help anytime to see this menu again.`;
 
+function getToday() {
+    return new Date().toISOString().split('T')[0];
+}
+
+async function addToChatHistory(phone, role, content) {
+  const ref = db.collection('users').doc(phone).collection('chat').doc();
+  await ref.set({ role, content, timestamp: new Date() });
+}
+
 async function handleMessage(req, twiml) {
   const phone = req.body.From;
-  const msg = req.body.Body.trim().toLowerCase();
+  const msg = req.body.Body.trim();
+  const lowerMsg = msg.toLowerCase();
   const today = getToday();
-  initUser(phone);
-  const user = getUser(phone);
 
-  // ✅ Handle confirmation replies
+  await initUser(phone);
+  const user = await getUser(phone);
+
+  await addToChatHistory(phone, 'user', msg);
+
   if (pendingConfirmations[phone]) {
     const { intent, payload } = pendingConfirmations[phone];
-    if (msg === 'yes' || msg === 'y') {
+    if (lowerMsg === 'yes' || lowerMsg === 'y') {
       if (intent === 'log_food') {
-        logMeal(phone, payload);
-        twiml.message(`✅ Logged: ${payload.label}\nCalories: ${payload.calories} | Protein: ${payload.protein}g | Carbs: ${payload.carbs}g | Fat: ${payload.fat}g`);
+        await logMeal(phone, payload);
+        const reply = `✅ Logged: ${payload.label}\nCalories: ${payload.calories} | Protein: ${payload.protein}g | Carbs: ${payload.carbs}g | Fat: ${payload.fat}g`;
+        twiml.message(reply);
+        await addToChatHistory(phone, 'assistant', reply);
       } else if (intent === 'log_weight') {
-        logWeight(phone, payload.weight);
-        twiml.message(`✅ Logged weight: ${payload.weight} lbs`);
+        await logWeight(phone, payload.weight);
+        const reply = `✅ Logged weight: ${payload.weight} lbs`;
+        twiml.message(reply);
+        await addToChatHistory(phone, 'assistant', reply);
       }
     } else {
-      twiml.message(`❌ Got it — not logging anything.`);
+      const cancel = `❌ Got it — not logging anything.`;
+      twiml.message(cancel);
+      await addToChatHistory(phone, 'assistant', cancel);
     }
     delete pendingConfirmations[phone];
     return;
   }
 
-  // Static command routes
-  if (msg === '/start' || msg === '/help') {
+  if (lowerMsg === '/start' || lowerMsg === '/help') {
     twiml.message(mainMenu);
+    await addToChatHistory(phone, 'assistant', mainMenu);
     return;
   }
 
-  if (msg === '/summary') {
-    const logs = user.meals[today] || [];
+  if (lowerMsg === '/summary') {
+    const logs = user.meals?.[today] || [];
     const total = logs.reduce((acc, meal) => {
       acc.calories += meal.calories;
       acc.protein += meal.protein;
@@ -69,63 +88,76 @@ async function handleMessage(req, twiml) {
     });
     summary += `\nTotal: ${total.calories} cal | Protein: ${total.protein}g | Carbs: ${total.carbs}g | Fat: ${total.fat}g`;
     twiml.message(summary);
+    await addToChatHistory(phone, 'assistant', summary);
     return;
   }
 
-  if (msg.startsWith('/goal')) {
-    const goal = msg.split(' ')[1]?.toLowerCase();
+  if (lowerMsg.startsWith('/goal')) {
+    const goal = lowerMsg.split(' ')[1]?.toLowerCase();
     if (["cut", "bulk", "maintain"].includes(goal)) {
-      user.goal = goal;
-      twiml.message(`🎯 Goal set to: ${goal}`);
+      const updated = { ...user, goal };
+      await db.collection('users').doc(phone).set(updated, { merge: true });
+      const reply = `🎯 Goal set to: ${goal}`;
+      twiml.message(reply);
+      await addToChatHistory(phone, 'assistant', reply);
     } else {
-      twiml.message(`❌ Invalid goal. Use /goal cut | bulk | maintain`);
+      const reply = `❌ Invalid goal. Use /goal cut | bulk | maintain`;
+      twiml.message(reply);
+      await addToChatHistory(phone, 'assistant', reply);
     }
     return;
   }
 
-  if (msg.startsWith('/info')) {
+  if (lowerMsg.startsWith('/info')) {
     const topic = msg.split(' ').slice(1).join(' ');
     if (!topic) {
-      twiml.message("ℹ️ Please ask about a topic. Example: /info protein");
+      const reply = "ℹ️ Please ask about a topic. Example: /info protein";
+      twiml.message(reply);
+      await addToChatHistory(phone, 'assistant', reply);
     } else {
       const info = await getNutritionInfo(topic);
       twiml.message(`📚 ${info}`);
+      await addToChatHistory(phone, 'assistant', info);
     }
     return;
   }
 
-  if (msg === '/mealplan') {
+  if (lowerMsg === '/mealplan') {
     const info = await getNutritionInfo(`Create a 1-day Indian meal plan for someone with a goal to ${user.goal}. Include estimated calories and macros.`);
     twiml.message(`📋 ${info}`);
+    await addToChatHistory(phone, 'assistant', info);
     return;
   }
 
-  // 🔍 Detect intent for freeform message
-  const { intent, payload, confirmationRequired } = await detectIntent(req.body.Body);
+  const { intent, payload, confirmationRequired } = await detectIntent(msg);
 
   if (intent === 'log_food' && confirmationRequired) {
-    twiml.message(`🍽️ This looks like a food log:
-${payload.label} – ${payload.calories} cal
-Log this? (yes/no)`);
+    const reply = `🍽️ This looks like a food log:\n${payload.label} – ${payload.calories} cal\nLog this? (yes/no)`;
+    twiml.message(reply);
     pendingConfirmations[phone] = { intent, payload };
+    await addToChatHistory(phone, 'assistant', reply);
     return;
   }
 
   if (intent === 'log_weight' && confirmationRequired) {
-    twiml.message(`⚖️ Log your weight as ${payload.weight} lbs? (yes/no)`);
+    const reply = `⚖️ Log your weight as ${payload.weight} lbs? (yes/no)`;
+    twiml.message(reply);
     pendingConfirmations[phone] = { intent, payload };
+    await addToChatHistory(phone, 'assistant', reply);
     return;
   }
 
   if (intent === 'mealplan') {
     const info = await getNutritionInfo(`Create a 1-day Indian meal plan for someone with a goal to ${user.goal}. Include estimated calories and macros.`);
     twiml.message(`📋 ${info}`);
+    await addToChatHistory(phone, 'assistant', info);
     return;
   }
 
   if (intent === 'info') {
     const info = await getNutritionInfo(payload.topic);
     twiml.message(`📚 ${info}`);
+    await addToChatHistory(phone, 'assistant', info);
     return;
   }
 
@@ -133,7 +165,9 @@ Log this? (yes/no)`);
     return handleMessage({ body: { From: phone, Body: '/summary' } }, twiml);
   }
 
-  twiml.message("🤖 I'm not sure what you meant — try again or type /help for options.");
+  const fallback = "🤖 I'm not sure what you meant — try again or type /help for options.";
+  twiml.message(fallback);
+  await addToChatHistory(phone, 'assistant', fallback);
 }
 
 module.exports = { handleMessage };
