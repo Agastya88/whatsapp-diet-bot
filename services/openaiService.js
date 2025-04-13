@@ -29,12 +29,24 @@ The JSON must be exactly in the following format without any extra text:
 }
 
 async function getNutritionInfo(userCuriosity) {
-  const prompt = `${userCuriosity}. You are a helpful Indian nutrition assistant. Provide the user with relevant information to assist them.
-Respond ONLY in valid JSON with no additional commentary.
-The JSON must be exactly in the following format without any extra text:
-{
-  "info": ...
-}`;
+  const prompt = `${userCuriosity}. You are a helpful Indian nutrition assistant. Provide the user with relevant information to assist them.`;
+
+  const completion = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [
+      { role: 'system', content: 'You are an Indian nutritionist assistant.' },
+      { role: 'user', content: prompt }
+    ],
+    temperature: 0.5
+  });
+
+  return completion.choices[0].message.content;
+}
+
+async function guideUser(userIntent) {
+  const prompt = `You are a helpful nutrition assistant. The user has done something outside of your known intents. It's intent was ${userIntent}.
+  Use the user's intent message to create a witty response that guides the user back to using the app for food logging, weight tracking,
+  managing their fitness goals or general nutrition info.`;
 
   const completion = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
@@ -54,7 +66,6 @@ The JSON must be exactly in the following format without any extra text:
  */
 async function generateUserFeedback(prompt) {
   try {
-    console.log (prompt)
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
@@ -69,21 +80,6 @@ async function generateUserFeedback(prompt) {
     console.error("Error generating feedback:", error);
     return "I'm sorry, I'm having trouble generating feedback right now. Please try again later.";
   }
-}
-
-async function guideUser(topic) {
-  const prompt = ``;
-
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages: [
-      { role: 'system', content: 'You are an Indian nutritionist assistant.' },
-      { role: 'user', content: prompt }
-    ],
-    temperature: 0.5
-  });
-
-  return completion.choices[0].message.content;
 }
 
 module.exports = {

@@ -10,7 +10,7 @@ const {
   getUserFeedback
 } = require('../utils/firebaseDataStore');
 const { detectIntent } = require('../services/intentService');
-const { getMealEstimation, getNutritionInfo } = require('../services/openaiService');
+const { getMealEstimation, getNutritionInfo, guideUser } = require('../services/openaiService');
 
 // Global object to store pending confirmation for actions like meal or weight logging.
 const pendingConfirmations = {};
@@ -89,14 +89,12 @@ async function handleMessage(req, twiml) {
     await addToChatHistory(phone, 'assistant', response);
     twiml.message(response);
   } else if (intent === 'info') {
-    info = await getNutritionInfo(payload)
-    response = info.info
+    response = await getNutritionInfo(payload)
     await addToChatHistory(phone, 'assistant', response);
     twiml.message(response);
   }
   else {
-    // Fallback if the intent is not recognized.
-    response = await guideUser();
+    response = await guideUser(payload);
     await addToChatHistory(phone, 'assistant', response);
     twiml.message(response);
   }

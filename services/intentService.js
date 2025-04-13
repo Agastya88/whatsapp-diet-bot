@@ -23,7 +23,7 @@ Your goal is to determine the user's intentions. Here are the possible user inte
 2. The user is trying to log their weight -> put this in the weight category.
 3. The user is trying to discuss their goals -> put this in the goals category.
 4. The user is trying to learn about a topic related to nutrition and wellness -> put this in the info category.
-5. The user is trying to do something outside of these 3 things -> put this in the other category.
+5. The user is trying to do something outside of these 4 things -> put this in the other category.
 
 Prioritize the latest message, but also keep in account the user's chat history: ${historyString}.
 
