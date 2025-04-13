@@ -3,36 +3,82 @@ const { OpenAI } = require('openai');
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 async function getMealEstimation(mealText) {
-  const prompt = `Estimate the calories, protein, carbs, and fat for this Indian meal: "${mealText}". Respond in JSON:
-  {
-    "label": "...",
-    "calories": ...,
-    "protein": ...,
-    "carbs": ...,
-    "fat": ...
-  }`;
+  const prompt = `Estimate the calories, protein, carbs, and fat for this meal: "${mealText}".
+Respond ONLY in valid JSON with no additional commentary.
+The JSON must be exactly in the following format without any extra text:
+{
+  "label": "...",
+  "calories": ...,
+  "protein": ...,
+  "carbs": ...,
+  "fat": ...
+}`;
 
   const completion = await openai.chat.completions.create({
-    model: 'gpt-3.5-turbo',
+    model: 'gpt-4o-mini',
     messages: [
-      { role: 'system', content: 'You are a nutrition assistant who estimates Indian food macros.' },
-      { role: 'user', content: prompt },
+      { role: 'system', content: 'You are a nutrition assistant who estimates food calories and macros.' },
+      { role: 'user', content: prompt }
     ],
     temperature: 0.4
   });
 
   const json = JSON.parse(completion.choices[0].message.content);
+  console.log(json);
   return json;
 }
 
-async function getNutritionInfo(topic) {
-  const prompt = `You are a helpful Indian nutrition assistant. Explain this topic in clear, beginner-friendly language for someone in India: ${topic}`;
+async function getNutritionInfo(userCuriosity) {
+  const prompt = `${userCuriosity}. You are a helpful Indian nutrition assistant. Provide the user with relevant information to assist them.
+Respond ONLY in valid JSON with no additional commentary.
+The JSON must be exactly in the following format without any extra text:
+{
+  "info": ...
+}`;
 
   const completion = await openai.chat.completions.create({
-    model: 'gpt-3.5-turbo',
+    model: 'gpt-4o-mini',
     messages: [
       { role: 'system', content: 'You are an Indian nutritionist assistant.' },
-      { role: 'user', content: prompt },
+      { role: 'user', content: prompt }
+    ],
+    temperature: 0.5
+  });
+
+  return completion.choices[0].message.content;
+}
+
+/**
+ * generateUserFeedback accepts an aggregated prompt as input and returns feedback from OpenAI.
+ * This function follows a similar pattern as the other OpenAI calls in this file.
+ */
+async function generateUserFeedback(prompt) {
+  try {
+    console.log (prompt)
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: 'You are a helpful nutrition coach.' },
+        { role: 'user', content: prompt }
+      ],
+      temperature: 0.7
+    });
+    const feedback = completion.choices[0].message.content;
+    return feedback;
+  } catch (error) {
+    console.error("Error generating feedback:", error);
+    return "I'm sorry, I'm having trouble generating feedback right now. Please try again later.";
+  }
+}
+
+async function guideUser(topic) {
+  const prompt = ``;
+
+  const completion = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [
+      { role: 'system', content: 'You are an Indian nutritionist assistant.' },
+      { role: 'user', content: prompt }
     ],
     temperature: 0.5
   });
@@ -42,5 +88,7 @@ async function getNutritionInfo(topic) {
 
 module.exports = {
   getMealEstimation,
-  getNutritionInfo
+  getNutritionInfo,
+  generateUserFeedback,
+  guideUser
 };
