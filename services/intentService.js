@@ -31,9 +31,10 @@ Return your answer strictly as valid JSON in the following format, use the paylo
 you determined beyond just the category (for instance, for food you could say something like: the user is trying to determine the number of calories in a potato).
 The only exception is in the case of weight, just straight up give me the weight as the payload:
 
+
 {
   "intent": "food" | "weight" | "goals" | "info" | "other",
-  "payload": "some string explaining intent further",
+  "payload": "some string explaining intent further", //in the case of weight, this must be JUST A NUMBER representing their weight in lbs.
   "confirmationRequired": false
 }
 
