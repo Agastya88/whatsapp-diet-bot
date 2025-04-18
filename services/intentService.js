@@ -51,6 +51,7 @@ User: "${userMessage}"`;
 
   try {
     const result = JSON.parse(completion.choices[0].message.content);
+    console.log (result)
     return result;
   } catch (error) {
     return { intent: "other", payload: "error", confirmationRequired: false };

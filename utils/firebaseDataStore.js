@@ -183,6 +183,7 @@ ${weightSummary}
 
 Based on the above information, please provide personalized, constructive feedback and suggestions to help the user improve their nutrition and progress towards their goals. Your response should be concise, encouraging, and actionable.`;
 
+  console.log ("The Prompt being sent to generate user feedback:"+prompt)
   return await generateUserFeedback(prompt);
 }
 
