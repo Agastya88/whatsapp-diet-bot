@@ -1,60 +1,51 @@
-// services/intentService.js
-
+// services/intentService.js  – context‑aware intent detection
 const { OpenAI } = require('openai');
+const { getRecentChatContext } = require('../utils/chatContext');
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Helper function to format chat history for context.
-function buildChatHistoryString(chatHistory) {
-  return chatHistory
-    .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: "${msg.content}"`)
-    .join('\n');
-}
-
-async function detectIntent(userMessage, chatHistory = []) {
-  const historyString = chatHistory.length
-    ? `Chat history:\n${buildChatHistoryString(chatHistory)}\n`
+/**
+ * detectIntent analyzes the user's latest message within their recent chat context
+ * and returns an intent object: { intent, payload, confirmationRequired }.
+ * @param {string} userMessage - the current user message
+ * @param {string} phone - user's phone number for retrieving chat context
+ */
+async function detectIntent(userMessage, phone) {
+  // Fetch recent chat turns for context
+  const chatCtx = await getRecentChatContext(phone, 6);
+  const historyString = chatCtx.length
+    ? 'Chat history:\n' +
+      chatCtx.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: "${m.content}"`).join('\n') +
+      '\n'
     : '';
 
-  const prompt = `
-You are an intelligent nutrition coach bot whose only actions are to.
-
-Your goal is to determine the user's intentions. Here are the possible user intentions:
-1. The user is trying to log a meal or determine the calories of a certain food -> put this in the food category.
-2. The user is trying to log their weight -> put this in the weight category.
-3. The user is trying to discuss their goals -> put this in the goals category.
-4. The user is trying to learn about a topic related to nutrition and wellness -> put this in the info category.
-5. The user is trying to do something outside of these 4 things -> put this in the other category.
-
-Prioritize the latest message, but also keep in account the user's chat history: ${historyString}.
-
-Return your answer strictly as valid JSON in the following format, use the payload field to give a detailed description of the intent
-you determined beyond just the category (for instance, for food you could say something like: the user is trying to determine the number of calories in a potato).
-The only exception is in the case of weight, just straight up give me the weight as the payload:
-
-
-{
-  "intent": "food" | "weight" | "goals" | "info" | "other",
-  "payload": "some string explaining intent further", //in the case of weight, this must be JUST A NUMBER representing their weight in lbs.
-  "confirmationRequired": false
-}
-
-User: "${userMessage}"`;
+  const prompt =
+    `You are a concise intent detection system for an Indian nutrition coach bot.\n\n` +
+    `${historyString}` +
+    `Determine the user's intent from the following message, choosing one of: food, weight, goals, info, other.\n` +
+    `- For 'food', payload should describe what they want to log or estimate (e.g. calories for meal).\n` +
+    `- For 'weight', payload must be ONLY the weight number in lbs.\n` +
+    `- For 'goals', payload describes the goal action.\n` +
+    `- For 'info', payload is the topic they are asking about.\n` +
+    `- For 'other', payload can be a short explanation.\n\n` +
+    `Return valid JSON with keys: intent, payload, confirmationRequired.\n` +
+    `If logging actions require confirmation (food or weight), set confirmationRequired to true; otherwise false.\n` +
+    `Respond ONLY with JSON.\n\n` +
+    `User: "${userMessage}"`;
 
   const completion = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [
-      { role: 'system', content: 'You are a concise intent detection system for a nutrition coach bot.' },
+      { role: 'system', content: 'You are an intelligent nutrition coach bot intent parser.' },
       { role: 'user', content: prompt }
     ],
-    temperature: 0.3,
+    temperature: 0.3
   });
 
   try {
-    const result = JSON.parse(completion.choices[0].message.content);
-    console.log (result)
-    return result;
-  } catch (error) {
-    return { intent: "other", payload: "error", confirmationRequired: false };
+    return JSON.parse(completion.choices[0].message.content);
+  } catch (err) {
+    console.error('Intent parsing error:', err, completion.choices[0].message.content);
+    return { intent: 'other', payload: userMessage, confirmationRequired: false };
   }
 }
 
