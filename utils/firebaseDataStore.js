@@ -1,192 +1,115 @@
-// utils/firebaseDataStore.js
-const admin = require('firebase-admin'); // Ensure admin is imported and initialized in your firebase.js
-const db = require('./firebase');
+const admin = require('firebase-admin');
+const db    = require('./firebase');
 const { generateUserFeedback } = require('../services/openaiService');
+const { getRecentChatContext } = require('./chatContext');
 
-// Validate that the document path is a valid non-empty string.
-const getUserRef = (phone) => {
-  if (!phone || typeof phone !== 'string' || phone.trim() === "") {
-    throw new Error('Invalid phone number provided to getUserRef.');
+/* helpers */
+const getUserRef = phone => {
+  if (!phone || typeof phone !== 'string' || !phone.trim()) {
+    throw new Error('Invalid phone number');
   }
   return db.collection('users').doc(phone);
 };
+const todayISO = () => new Date().toISOString().split('T')[0];
 
+/* user CRUD */
 async function initUser(phone) {
-  try {
-    const userRef = getUserRef(phone);
-    const doc = await userRef.get();
-    if (!doc.exists) {
-      // Store phone so it's available in the user document.
-      await userRef.set({
-        phone,
-        goal: 'maintain',
-        meals: {},
-        weights: {},
-        createdAt: new Date()
-      });
-    }
-  } catch (err) {
-    console.error('Error in initUser:', err);
-    throw err;
+  const ref = getUserRef(phone);
+  if (!(await ref.get()).exists) {
+    await ref.set({ phone, goal: 'maintain', createdAt: new Date() });
   }
 }
+const getUser = async phone => (await getUserRef(phone).get()).data();
 
-async function getUser(phone) {
-  try {
-    const doc = await getUserRef(phone).get();
-    const data = doc.exists ? doc.data() : null;
-    // If the user exists but the "phone" property is missing, add it.
-    if (data && !data.phone) {
-      data.phone = phone;
-    }
-    return data;
-  } catch (err) {
-    console.error('Error in getUser:', err);
-    throw err;
-  }
-}
-
+/* logging */
 async function logMeal(phone, meal) {
-  try {
-    const userRef = getUserRef(phone);
-    const today = new Date().toISOString().split('T')[0];
-    await userRef.set(
-      { [`meals.${today}`]: admin.firestore.FieldValue.arrayUnion(meal) },
-      { merge: true }
-    );
-  } catch (err) {
-    console.error('Error in logMeal:', err);
-    throw err;
-  }
+  await getUserRef(phone)
+    .collection('meals')
+    .doc(todayISO())
+    .set({ items: admin.firestore.FieldValue.arrayUnion(meal) }, { merge: true });
 }
 
-async function logWeight(phone, weight) {
-  try {
-    const userRef = getUserRef(phone);
-    const today = new Date().toISOString().split('T')[0];
-    await userRef.set(
-      { [`weights.${today}`]: weight },
-      { merge: true }
-    );
-  } catch (err) {
-    console.error('Error in logWeight:', err);
-    throw err;
-  }
+async function logWeight(phone, value) {
+  await getUserRef(phone)
+    .collection('weights')
+    .doc(todayISO())
+    .set({ value }, { merge: true });
 }
 
-// Add a message to the chat history sub-collection.
+/* chat logging */
 async function addToChatHistory(phone, role, content) {
-  try {
-    const chatRef = getUserRef(phone).collection('chat');
-    await chatRef.add({
-      role,
-      content,
-      timestamp: new Date()
-    });
-  } catch (err) {
-    console.error('Error in addToChatHistory:', err);
-    throw err;
-  }
+  await getUserRef(phone)
+    .collection('chat')
+    .add({ role, content, ts: admin.firestore.FieldValue.serverTimestamp() });
 }
-
-// Retrieve the most recent N messages from the user's chat history.
 async function getRecentChatHistory(phone, limit = 5) {
-  try {
-    const chatRef = getUserRef(phone).collection('chat');
-    const snapshot = await chatRef.orderBy('timestamp', 'desc').limit(limit).get();
-    const messages = [];
-    snapshot.forEach(doc => messages.push(doc.data()));
-    return messages.reverse(); // Return in chronological order.
-  } catch (err) {
-    console.error('Error in getRecentChatHistory:', err);
-    throw err;
-  }
+  const snap = await getUserRef(phone)
+    .collection('chat')
+    .orderBy('ts', 'desc')
+    .limit(limit)
+    .get();
+  return snap.docs.reverse().map(d => d.data());
 }
 
-/**
- * Retrieve recent chat history for feedback generation.
- */
-async function getRecentChatFeedback(phone) {
-  try {
-    const userRef = getUserRef(phone);
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    const snapshot = await userRef
-      .collection('chat')
-      .where('timestamp', '>=', sevenDaysAgo)
-      .orderBy('timestamp', 'asc')
-      .get();
-    let chatHistory = '';
-    snapshot.forEach(doc => {
-      const data = doc.data();
-      chatHistory += `${data.role}: ${data.content}\n`;
-    });
-    return chatHistory || "No recent conversation history.";
-  } catch (err) {
-    console.error('Error in getRecentChatFeedback:', err);
-    throw err;
-  }
+/* summaries */
+async function buildSummaries(phone, days = 14) {
+  const sinceIso = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - days);
+    return d.toISOString().split('T')[0];
+  })();
+
+  const toLines = (snap, fmt) =>
+    snap.docs.map(fmt).join('\n') || 'No logs found.';
+
+  /* meals */
+  const mealSnap = await getUserRef(phone)
+    .collection('meals')
+    .where(admin.firestore.FieldPath.documentId(), '>=', sinceIso)
+    .orderBy(admin.firestore.FieldPath.documentId())
+    .get();
+  const mealSummary = toLines(mealSnap, d =>
+    `${d.id}: ${(d.data().items || []).map(m => m.label).join(', ')}`
+  );
+
+  /* weights */
+  const weightSnap = await getUserRef(phone)
+    .collection('weights')
+    .where(admin.firestore.FieldPath.documentId(), '>=', sinceIso)
+    .orderBy(admin.firestore.FieldPath.documentId())
+    .get();
+  const weightSummary = toLines(weightSnap, d =>
+    `${d.id}: ${d.data().value} lbs`
+  );
+
+  return { mealSummary, weightSummary };
 }
 
-/**
- * getUserFeedback aggregates the user's meal, weight logs, and recent chat history,
- * then constructs a prompt and calls the OpenAI service to generate personalized feedback.
- */
-async function getUserFeedback(user) {
-  if (!user.phone) {
-    throw new Error('User object does not have a valid phone property.');
-  }
+/* feedback */
+async function getUserFeedback(phone, days = 14) {
+  const { mealSummary, weightSummary } = await buildSummaries(phone, days);
+  const chatCtx = (await getRecentChatContext(phone, 6))
+    .map(m => `${m.role}: ${m.content}`)
+    .join('\n');
 
-  const phone = user.phone;
-  const chatHistory = await getRecentChatFeedback(phone);
+  const prompt = `
+You are a friendly Indian nutrition coach.
 
-  console.log (user)
+Recent conversation:
+${chatCtx}
 
-  // Build a summary for meals.
-  let mealSummary = '';
-  if (user.meals) {
-    const dates = Object.keys(user.meals).sort();
-    dates.forEach(date => {
-      const mealsForDate = user.meals[date].map(meal => meal.label || JSON.stringify(meal)).join(', ');
-      mealSummary += `${date}: ${mealsForDate}\n`;
-    });
-  } else {
-    mealSummary = "No meal logs found.";
-  }
-
-  // Build a summary for weight logs.
-  let weightSummary = '';
-  if (user.weights) {
-    const dates = Object.keys(user.weights).sort();
-    dates.forEach(date => {
-      weightSummary += `${date}: ${user.weights[date]} lbs\n`;
-    });
-  } else {
-    weightSummary = "No weight logs found.";
-  }
-
-  const prompt = `You are a friendly and constructive nutrition coach.
-
-Here is the summary of the user's recent interactions:
-
-Chat History (last 7 days):
----------------------------
-${chatHistory}
-
-Meal Logs:
------------
+Meal logs (last ${days} days):
 ${mealSummary}
 
-Weight Logs:
--------------
+Weight logs:
 ${weightSummary}
 
-Based on the above information, please provide personalized, constructive feedback and suggestions to help the user improve their nutrition and progress towards their goals. Your response should be concise, encouraging, and actionable.`;
+Provide three actionable tips. Do NOT invent numbers. (≤3000 chars)`;
 
-  console.log ("The Prompt being sent to generate user feedback:"+prompt)
-  return await generateUserFeedback(prompt);
+  return generateUserFeedback(prompt);
 }
 
+/* exports */
 module.exports = {
   initUser,
   getUser,
@@ -194,5 +117,6 @@ module.exports = {
   logWeight,
   addToChatHistory,
   getRecentChatHistory,
+  getRecentChatContext,
   getUserFeedback
 };

@@ -1,11 +1,19 @@
 // services/openaiService.js
 const { OpenAI } = require('openai');
+const { getRecentChatContext } = require('../utils/chatContext');
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+/* ───────── constants ───────── */
+
+const SYSTEM_PROMPT =
+  'You are a nutritionist assistant who chats with users on WhatsApp. ' +
+  'All replies must be concise, friendly and NEVER exceed 3000 characters.';
+
+/* ───────── calorie / macro estimator ───────── */
+
 async function getMealEstimation(mealText) {
-  const prompt = `Estimate the calories, protein, carbs, and fat for this meal: "${mealText}".
-Respond ONLY in valid JSON with no additional commentary.
-The JSON must be exactly in the following format without any extra text:
+  const prompt = `Estimate calories, protein, carbs and fat for: "${mealText}".
+Respond ONLY as raw JSON exactly like:
 {
   "label": "...",
   "calories": ...,
@@ -17,74 +25,76 @@ The JSON must be exactly in the following format without any extra text:
   const completion = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [
-      { role: 'system', content: 'You are a nutrition assistant who estimates food calories and macros.' },
-      { role: 'user', content: prompt }
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user',   content: prompt }
     ],
-    temperature: 0.4
+    temperature: 0.3
   });
 
-  const json = JSON.parse(completion.choices[0].message.content);
-  console.log(json);
-  return json;
+  return JSON.parse(completion.choices[0].message.content);
 }
 
-async function getNutritionInfo(userCuriosity) {
-  const prompt = `${userCuriosity}. You are a helpful Indian nutrition assistant. Provide the user with relevant information to assist them.`;
+/* ───────── context‑aware Q&A ───────── */
+
+async function getNutritionInfo(question, phone) {
+  const ctx = await getRecentChatContext(phone, 6);       // last 6 turns
+  const completion = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      ...ctx,
+      { role: 'user',   content: question }
+    ],
+    temperature: 0.5
+  });
+  return completion.choices[0].message.content.trim();
+}
+
+/* ───────── context‑aware nudge / redirect ───────── */
+
+async function guideUser(userIntent, phone) {
+  const ctx = await getRecentChatContext(phone, 6);
+  const prompt =
+    `User just sent: "${userIntent}". ` +
+    'Reply in a witty, friendly tone and steer them back to logging meals, ' +
+    'tracking weight or asking nutrition questions.';
 
   const completion = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [
-      { role: 'system', content: 'You are an Indian nutritionist assistant.' },
-      { role: 'user', content: prompt }
+      { role: 'system', content: SYSTEM_PROMPT },
+      ...ctx,
+      { role: 'user',   content: prompt }
     ],
-    temperature: 0.5
+    temperature: 0.7
   });
-
-  return completion.choices[0].message.content;
+  return completion.choices[0].message.content.trim();
 }
 
-async function guideUser(userIntent) {
-  const prompt = `You are a helpful nutrition assistant. The user has done something outside of your known intents. It's intent was ${userIntent}.
-  Use the user's intent message to create a witty response that guides the user back to using the app for food logging, weight tracking,
-  managing their fitness goals or general nutrition info.`;
+/* ───────── feedback generator (chat context already in prompt) ───────── */
 
-  const completion = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages: [
-      { role: 'system', content: 'You are an Indian nutritionist assistant.' },
-      { role: 'user', content: prompt }
-    ],
-    temperature: 0.5
-  });
-
-  return completion.choices[0].message.content;
-}
-
-/**
- * generateUserFeedback accepts an aggregated prompt as input and returns feedback from OpenAI.
- * This function follows a similar pattern as the other OpenAI calls in this file.
- */
 async function generateUserFeedback(prompt) {
   try {
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
-        { role: 'system', content: 'You are a helpful nutrition coach.' },
-        { role: 'user', content: prompt }
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user',   content: prompt }
       ],
-      temperature: 0.7
+      temperature: 0.6
     });
-    const feedback = completion.choices[0].message.content;
-    return feedback;
-  } catch (error) {
-    console.error("Error generating feedback:", error);
-    return "I'm sorry, I'm having trouble generating feedback right now. Please try again later.";
+    return completion.choices[0].message.content.trim();
+  } catch (err) {
+    console.error('Feedback generation error:', err);
+    return '⚠️  Sorry, I had trouble generating feedback. Please try again later.';
   }
 }
 
+/* ───────── exports ───────── */
+
 module.exports = {
-  getMealEstimation,
-  getNutritionInfo,
-  generateUserFeedback,
-  guideUser
+  getMealEstimation,   // (mealText)
+  getNutritionInfo,    // (question, phone)
+  guideUser,           // (userIntent, phone)
+  generateUserFeedback // (prompt)
 };
