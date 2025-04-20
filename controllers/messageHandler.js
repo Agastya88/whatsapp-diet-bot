@@ -19,132 +19,185 @@ const {
   makeCalorieChartUrl,
 } = require('../utils/chartGenerator');
 
-const pendingConfirmations = {}; // phone → { intent, payload }
+const pendingConfirmations = {}; // { [phone]: { intent, payload } }
 
 async function handleMessage(req, twiml) {
   const phone = req.body.From;
   const rawMsg = (req.body.Body || '').trim();
   const lower = rawMsg.toLowerCase();
 
-  // 1) Ensure user & log incoming
-  await initUser(phone);
-  const user = await getUser(phone);
-  await addToChatHistory(phone, 'user', rawMsg);
+  console.log(`[Handler] Received message from ${phone}: "${rawMsg}"`);
 
-  // 2) Handle “yes/no” confirmations first
+  // 1. Ensure user exists & log the incoming message
+  try {
+    await initUser(phone);
+    console.log(`[Handler] initUser succeeded for ${phone}`);
+  } catch (err) {
+    console.error(`[Handler] initUser failed for ${phone}:`, err);
+  }
+
+  try {
+    await addToChatHistory(phone, 'user', rawMsg);
+    console.log(`[Handler] addToChatHistory (user) succeeded for ${phone}`);
+  } catch (err) {
+    console.error(`[Handler] addToChatHistory (user) failed for ${phone}:`, err);
+  }
+
+  // 2. Handle any pending yes/no confirmations
   if (pendingConfirmations[phone]) {
     const { intent, payload } = pendingConfirmations[phone];
+    console.log(`[Handler] Found pending confirmation for ${phone}: intent=${intent}`, payload);
     delete pendingConfirmations[phone];
 
     if (['yes', 'y'].includes(lower)) {
-      let reply;
-      if (intent === 'food') {
-        await logMeal(phone, payload);
-        reply = `✅ Your meal "${payload.label}" has been logged.`;
-      } else {
-        await logWeight(phone, payload);
-        reply = `✅ Your weight of ${payload} lbs has been logged.`;
-      }
-      twiml.message(reply);
-      await addToChatHistory(phone, 'assistant', reply);
-      return;
-    } else {
-      const reply = `❌ Got it. I won't log that ${intent}.`;
-      twiml.message(reply);
-      await addToChatHistory(phone, 'assistant', reply);
-      return;
-    }
-  }
-
-  // 3) Built‑in command: /progress → charts
-  if (lower === '/progress') {
-    const wUrl = await makeWeightChartUrl(phone, 14);
-    const cUrl = await makeCalorieChartUrl(phone, 14);
-
-    twiml.message('📈 Your weight trend:').media(wUrl);
-    twiml.message('🔥 Your calorie intake:').media(cUrl);
-    return;
-  }
-
-  // 4) Intent detection
-  let detected;
-  try {
-    detected = await detectIntent(rawMsg, phone);
-  } catch (err) {
-    console.error('Intent detection error', err);
-    detected = [{ intent: 'unknown', payload: rawMsg, confirmationRequired: false }];
-  }
-  // support array or single object
-  const first = Array.isArray(detected) ? detected[0] : detected;
-  const { intent, payload, confirmationRequired } = first;
-  console.log('Detected intent:', intent, payload, confirmationRequired);
-
-  // 5) Route based on intent
-  try {
-    // 5a) Weight logging
-    if (intent === 'weight' && confirmationRequired) {
-      const msg = `⚖️ I detected your weight is ${payload} lbs. Log it? (yes/no)`;
-      pendingConfirmations[phone] = { intent: 'weight', payload };
-      twiml.message(msg);
-      await addToChatHistory(phone, 'assistant', msg);
-      return;
-    }
-
-    // 5b) Food logging
-    if (intent === 'food' && confirmationRequired) {
-      // Use rawMsg as fallback if detectIntent payload isn't meal text
-      const mealText = typeof payload === 'string' ? rawMsg : payload.meal || rawMsg;
-      let estimation;
       try {
-        estimation = await getMealEstimation(mealText);
+        let reply;
+        if (intent === 'food') {
+          await logMeal(phone, payload);
+          reply = `✅ Logged meal: "${payload.label}" (${payload.calories} cal).`;
+        } else {
+          await logWeight(phone, payload);
+          reply = `✅ Logged weight: ${payload} lbs.`;
+        }
+        twiml.message(reply);
+        console.log(`[Handler] Confirmation YES handled for ${phone}: ${reply}`);
+        await addToChatHistory(phone, 'assistant', reply);
       } catch (err) {
-        console.error('Food estimation failed', err);
-        const fallback = await guideUser(rawMsg, phone);
-        twiml.message(fallback);
-        await addToChatHistory(phone, 'assistant', fallback);
-        return;
+        console.error(`[Handler] Error logging confirmed ${intent} for ${phone}:`, err);
+        const errorMsg = "😕 Couldn't log your data, please try again.";
+        twiml.message(errorMsg);
+        await addToChatHistory(phone, 'assistant', errorMsg);
       }
-
-      const msg =
-        `🍽️ Estimated for "${estimation.label}":\n` +
-        `${estimation.calories} cal | ${estimation.protein}g P | ` +
-        `${estimation.carbs}g C | ${estimation.fat}g F\n` +
-        `Log this meal? (yes/no)`;
-
-      pendingConfirmations[phone] = { intent: 'food', payload: estimation };
-      twiml.message(msg);
-      await addToChatHistory(phone, 'assistant', msg);
-      return;
+    } else {
+      const reply = `❌ Okay, not logging that ${intent}.`;
+      twiml.message(reply);
+      console.log(`[Handler] Confirmation NO handled for ${phone}: ${reply}`);
+      await addToChatHistory(phone, 'assistant', reply);
     }
-
-    // 5c) Goals / weekly feedback
-    if (intent === 'goals') {
-      const fb = await getUserFeedback(phone);
-      twiml.message(fb);
-      await addToChatHistory(phone, 'assistant', fb);
-      return;
-    }
-
-    // 5d) Nutrition info Q&A
-    if (intent === 'info') {
-      const info = await getNutritionInfo(payload, phone);
-      twiml.message(info);
-      await addToChatHistory(phone, 'assistant', info);
-      return;
-    }
-
-    // 5e) Fallback / guide
-    const guide = await guideUser(rawMsg, phone);
-    twiml.message(guide);
-    await addToChatHistory(phone, 'assistant', guide);
     return;
+  }
 
+  // 3. Built-in slash commands
+  if (lower === '/progress') {
+    console.log(`[Handler] Processing /progress for ${phone}`);
+    try {
+      const wUrl = await makeWeightChartUrl(phone, 14);
+      const cUrl = await makeCalorieChartUrl(phone, 14);
+      twiml.message('📈 Here’s your weight trend:').media(wUrl);
+      twiml.message('🔥 Here’s your calorie intake trend:').media(cUrl);
+      console.log(`[Handler] Sent charts to ${phone}`);
+    } catch (err) {
+      console.error(`[Handler] Error generating charts for ${phone}:`, err);
+      const errorMsg = "😕 Couldn't generate charts right now.";
+      twiml.message(errorMsg);
+      await addToChatHistory(phone, 'assistant', errorMsg);
+    }
+    return;
+  }
+
+  if (lower === '/help' || lower === '/start') {
+    console.log(`[Handler] Processing help/start for ${phone}`);
+    const menu =
+      `👋 Hi! I’m your WhatsApp Diet Coach:\n` +
+      `• Log food by typing what you ate (e.g., “2 rotis and dal”)\n` +
+      `• Log weight by typing your weight (e.g., “170 lbs”)\n` +
+      `• /progress → see your charts\n` +
+      `• Ask questions like “what’s a good protein source?”\n` +
+      `• /help → show this menu\n`;
+    twiml.message(menu);
+    await addToChatHistory(phone, 'assistant', menu);
+    return;
+  }
+
+  // 4. Detect intent
+  let intentResult;
+  try {
+    intentResult = await detectIntent(rawMsg, phone);
+    console.log(`[Handler] detectIntent returned for ${phone}:`, intentResult);
   } catch (err) {
-    // Catch any unexpected errors so Twilio still gets a response
-    console.error('Handler error', err);
-    const sorry = "😕 Oops, something went wrong. Please try again.";
-    twiml.message(sorry);
-    await addToChatHistory(phone, 'assistant', sorry);
+    console.error(`[Handler] detectIntent error for ${phone}:`, err);
+    intentResult = { intent: 'other', payload: rawMsg, confirmationRequired: false };
+  }
+
+  const { intent, payload, confirmationRequired } = Array.isArray(intentResult)
+    ? intentResult[0]
+    : intentResult;
+
+  console.log(`[Handler] Routing intent for ${phone}:`, { intent, payload, confirmationRequired });
+
+  // 5. Route based on intent
+  try {
+    switch (intent) {
+      case 'food':
+        if (confirmationRequired) {
+          console.log(`[Handler] Handling food intent for ${phone}`);
+          const mealText = rawMsg;
+          let estimation;
+          try {
+            estimation = await getMealEstimation(mealText);
+            console.log(`[Handler] getMealEstimation success for ${phone}:`, estimation);
+          } catch (e) {
+            console.error(`[Handler] getMealEstimation failed for ${phone}:`, e);
+            const fallback = await guideUser(rawMsg, phone);
+            twiml.message(fallback);
+            await addToChatHistory(phone, 'assistant', fallback);
+            return;
+          }
+
+          const msg =
+            `🍽️ I estimate: "${estimation.label}" = ` +
+            `${estimation.calories} cal, ${estimation.protein}g P, ` +
+            `${estimation.carbs}g C, ${estimation.fat}g F.\n` +
+            `Log this meal? (yes/no)`;
+          pendingConfirmations[phone] = { intent: 'food', payload: estimation };
+          twiml.message(msg);
+          await addToChatHistory(phone, 'assistant', msg);
+          console.log(`[Handler] Sent food confirmation to ${phone}`);
+          return;
+        }
+        break;
+
+      case 'weight':
+        if (confirmationRequired) {
+          console.log(`[Handler] Handling weight intent for ${phone}, payload=${payload}`);
+          const msg = `⚖️ I detected your weight as ${payload} lbs. Log it? (yes/no)`;
+          pendingConfirmations[phone] = { intent: 'weight', payload };
+          twiml.message(msg);
+          await addToChatHistory(phone, 'assistant', msg);
+          console.log(`[Handler] Sent weight confirmation to ${phone}`);
+          return;
+        }
+        break;
+
+      case 'goals':
+        console.log(`[Handler] Handling goals intent for ${phone}`);
+        const feedback = await getUserFeedback(phone);
+        twiml.message(feedback);
+        await addToChatHistory(phone, 'assistant', feedback);
+        console.log(`[Handler] Sent feedback to ${phone}`);
+        return;
+
+      case 'info':
+        console.log(`[Handler] Handling info intent for ${phone}, topic="${payload}"`);
+        const info = await getNutritionInfo(payload, phone);
+        twiml.message(info);
+        await addToChatHistory(phone, 'assistant', info);
+        console.log(`[Handler] Sent info to ${phone}`);
+        return;
+
+      default:
+        console.log(`[Handler] Handling fallback intent for ${phone}`);
+        const guide = await guideUser(rawMsg, phone);
+        twiml.message(guide);
+        await addToChatHistory(phone, 'assistant', guide);
+        console.log(`[Handler] Sent fallback guide to ${phone}`);
+        return;
+    }
+  } catch (err) {
+    console.error(`[Handler] Error in intent routing for ${phone}:`, err);
+    const errorMsg = "😕 Something went wrong. Please try again.";
+    twiml.message(errorMsg);
+    await addToChatHistory(phone, 'assistant', errorMsg);
     return;
   }
 }
