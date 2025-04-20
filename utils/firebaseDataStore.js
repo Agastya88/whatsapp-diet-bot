@@ -93,8 +93,6 @@ async function getUserFeedback(phone, days = 14) {
     .join('\n');
 
   const prompt = `
-You are a friendly Indian nutrition coach.
-
 Recent conversation:
 ${chatCtx}
 
