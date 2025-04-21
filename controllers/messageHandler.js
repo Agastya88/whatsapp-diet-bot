@@ -52,7 +52,7 @@ async function handleMessage(req, twiml) {
     if (['yes', 'y'].includes(lower)) {
       try {
         let reply;
-        if (intent === 'food') {
+        if (intent === 'food-logging') {
           await logMeal(phone, payload);
           reply = `✅ Logged meal: "${payload.label}" (${payload.calories} cal).`;
         } else {
@@ -99,7 +99,7 @@ async function handleMessage(req, twiml) {
     console.log(`[Handler] Processing help/start for ${phone}`);
     const menu =
       `👋 Hi! I’m your WhatsApp Diet Coach:\n` +
-      `• Log food by typing what you ate (e.g., “2 rotis and dal”)\n` +
+      `• Log food-logging by typing what you ate (e.g., “2 rotis and dal”)\n` +
       `• Log weight by typing your weight (e.g., “170 lbs”)\n` +
       `• /progress → see your charts\n` +
       `• Ask questions like “what’s a good protein source?”\n` +
@@ -128,9 +128,9 @@ async function handleMessage(req, twiml) {
   // 5. Route based on intent
   try {
     switch (intent) {
-      case 'food':
+      case 'food-logging-logging':
         if (confirmationRequired) {
-          console.log(`[Handler] Handling food intent for ${phone}`);
+          console.log(`[Handler] Handling food-logging-logging intent for ${phone}`);
           const mealText = rawMsg;
           let estimation;
           try {
@@ -149,28 +149,28 @@ async function handleMessage(req, twiml) {
             `${estimation.calories} cal, ${estimation.protein}g P, ` +
             `${estimation.carbs}g C, ${estimation.fat}g F.\n` +
             `Log this meal? (yes/no)`;
-          pendingConfirmations[phone] = { intent: 'food', payload: estimation };
+          pendingConfirmations[phone] = { intent: 'food-logging', payload: estimation };
           twiml.message(msg);
           await addToChatHistory(phone, 'assistant', msg);
-          console.log(`[Handler] Sent food confirmation to ${phone}`);
+          console.log(`[Handler] Sent food-logging confirmation to ${phone}`);
           return;
         }
         break;
 
-      case 'weight':
+      case 'weight-logging':
         if (confirmationRequired) {
-          console.log(`[Handler] Handling weight intent for ${phone}, payload=${payload}`);
+          console.log(`[Handler] Handling weight-logging intent for ${phone}, payload=${payload}`);
           const msg = `⚖️ I detected your weight as ${payload} lbs. Log it? (yes/no)`;
-          pendingConfirmations[phone] = { intent: 'weight', payload };
+          pendingConfirmations[phone] = { intent: 'weight-logging', payload };
           twiml.message(msg);
           await addToChatHistory(phone, 'assistant', msg);
-          console.log(`[Handler] Sent weight confirmation to ${phone}`);
+          console.log(`[Handler] Sent weight-logging confirmation to ${phone}`);
           return;
         }
         break;
 
-      case 'goals':
-        console.log(`[Handler] Handling goals intent for ${phone}`);
+      case 'feedback':
+        console.log(`[Handler] Handling feedback intent for ${phone}`);
         const feedback = await getUserFeedback(phone);
         twiml.message(feedback);
         await addToChatHistory(phone, 'assistant', feedback);
