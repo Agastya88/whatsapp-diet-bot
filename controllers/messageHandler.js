@@ -128,9 +128,9 @@ async function handleMessage(req, twiml) {
   // 5. Route based on intent
   try {
     switch (intent) {
-      case 'food-logging-logging':
+      case 'food-logging':
         if (confirmationRequired) {
-          console.log(`[Handler] Handling food-logging-logging intent for ${phone}`);
+          console.log(`[Handler] Handling food-logging intent for ${phone}`);
           const mealText = rawMsg;
           let estimation;
           try {
