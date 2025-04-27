@@ -35,7 +35,7 @@ async function detectIntent(userMessage, phone) {
     `Determine the user's intent from the following message, choosing one of: food-logging, weight-logging, feedback, info, other.\n` +
     `- For 'food-logging', payload should describe what they want to log or estimate (e.g. calories for meal). Only enter this when trying to log food. No exceptions. \n` +
     `- For 'weight-logging', payload must be ONLY the weight number in lbs. Only enter this when trying to log weight. No exceptions. \n` +
-    `- For 'feedback', payload must be what kind of personalised feedback they are seeking. Typically if the user's message seems to be about gaining information regarding themselves, then this is the intent.\n` +
+    `- For 'feedback', payload must be what kind of personalised feedback they are seeking. Typically if the user's message seems to be about gaining information regarding themselves, then this is the intent. This includes any general questions they have about their own diet.\n` +
     `- For 'info', payload is the topic they are asking about. Typically the user's message seems to be regarding general information in the health and fitness space, but not specifically about them, then this is usually the intent.\n` +
     `- For 'other', payload can be a short explanation. This is a fallback option, when it seems the user is not talking about one of our anticipated intents. \n\n` +
     `Return ONLY raw JSON with keys: intent, payload, confirmationRequired.\n` +
