@@ -20,9 +20,8 @@ const {
 
 const pendingConfirmations = {}; // { [phone]: { intent, payload } }
 
-async function handleMessage(req) {
-  const phone  = req.body.From;
-  const rawMsg = (req.body.Body || '').trim();
+async function handleMessage({ phone, text }) {     // Cloud-API native
+  const rawMsg = text.trim();
   const lower  = rawMsg.toLowerCase();
 
   const replies = [];

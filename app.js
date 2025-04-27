@@ -50,7 +50,11 @@ app.post('/webhook', async (req, res) => {
     }).catch(()=>{}); // fire-and-forget
 
     /* 2b. get Nutribot replies */
-    const replies = await handleMessage(req);      // NEW signature
+    const replies = await handleMessage({
+      phone: '+' + message.from,          // add leading plus, no prefix
+      text : message.text?.body || ''
+    });
+
 
     /* 2c. send each reply */
     for (const r of replies) {

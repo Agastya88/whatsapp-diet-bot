@@ -4,8 +4,9 @@ const { generateUserFeedback } = require('../services/openaiService');
 const { getRecentChatContext } = require('./chatContext');
 
 /* helpers */
-const getUserRef = phone => {
-  if (!phone || typeof phone !== 'string' || !phone.trim()) {
+const getUserRef = (phone) => {
+  // Accept canonical E.164: a leading “+” followed by 10-15 digits
+  if (!/^\+\d{10,15}$/.test(phone)) {
     throw new Error('Invalid phone number');
   }
   return db.collection('users').doc(phone);
